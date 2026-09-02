@@ -4,9 +4,11 @@
 
 Как это работает:
 - Скрипт читает RSS-ленты нескольких зарубежных изданий/агентств
-- Отбирает только те новости, где встречаются ключевые слова
-  (Узбекистан / Uzbekistan / Tashkent + экономические термины)
-- Формирует список заголовков со ссылками
+- Для лент, посвящённых конкретно Узбекистану (RFE/RL), фильтрует
+  только по экономическим ключевым словам
+- Для общих региональных лент требует совпадение и по стране,
+  и по экономическому термину
+- Формирует список заголовков со ссылками, без пересказа
 - Отправляет в Telegram
 
 Ничего не стоит: RSS-ленты бесплатны, Telegram Bot API бесплатен,
@@ -24,33 +26,66 @@ import requests
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-# --- Зарубежные RSS-ленты, где может встречаться экономика Узбекистана ---
-FEEDS = {
-    "RFE/RL (Радио Свобода)": "https://www.rferl.org/api/zrqiteuuir",  # общий feed RFE/RL
-    "EurasiaNet": "https://eurasianet.org/rss",
-    "The Diplomat": "https://thediplomat.com/feed/",
-    "Reuters World News": "https://www.reutersagency.com/feed/?best-topics=world&post_type=best",
-    "AKIpress": "https://akipress.com/rss/news.rss",
-    "Trend News Agency": "https://en.trend.az/rss/",
-}
+# --- Зарубежные RSS-ленты ---
+# already_country_specific=True — лента и так посвящена Узбекистану,
+# дополнительно искать слово "Узбекистан" в тексте не нужно, хватит
+# экономического ключевого слова.
+FEEDS = [
+    {
+        "name": "RFE/RL — Узбекистан (Радио Озодлик)",
+        "url": "https://www.rferl.org/api/ztiiml-vomx-tpekgm_",
+        "already_country_specific": True,
+    },
+    {
+        "name": "Eurasianet — Узбекистан",
+        "url": "https://eurasianet.org/region/uzbekistan/feed",
+        "already_country_specific": True,
+    },
+    {
+        "name": "Times of Central Asia — Узбекистан",
+        "url": "https://timesca.com/feed",
+        "already_country_specific": False,
+    },
+    {
+        "name": "The Diplomat",
+        "url": "https://thediplomat.com/feed/",
+        "already_country_specific": False,
+    },
+    {
+        "name": "AKIpress",
+        "url": "https://akipress.com/rss/news.rss",
+        "already_country_specific": False,
+    },
+    {
+        "name": "Silk Road Briefing",
+        "url": "https://www.silkroadbriefing.com/news/feed/",
+        "already_country_specific": False,
+    },
+]
 
 # --- Ключевые слова для фильтрации (регистр не важен) ---
-COUNTRY_KEYWORDS = ["uzbekistan", "узбекистан", "tashkent", "ташкент"]
+COUNTRY_KEYWORDS = ["uzbekistan", "узбекистан", "tashkent", "ташкент", "uzbek"]
 ECONOMY_KEYWORDS = [
     "econom", "экономик", "gdp", "ввп", "inflation", "инфляц",
     "trade", "торгов", "investment", "инвестиц", "export", "экспорт",
-    "import", "импорт", "bank", "банк", "currency", "валют",
+    "import", "импорт", "bank", "банк", "currency", "валют", "sum ",
     "budget", "бюджет", "finance", "финанс", "market", "рынок",
-    "reform", "реформ", "industry", "промышленн",
+    "reform", "реформ", "industry", "промышленн", "energy", "энергет",
+    "gas", "газ", "oil", "нефт", "cotton", "хлопок", "gold", "золот",
+    "loan", "кредит", "debt", "долг", "tax", "налог", "privatiz",
+    "приватизац", "IMF", "МВФ", "World Bank", "Всемирный банк",
+    "growth", "рост экономики", "price", "цен",
 ]
 
-HOURS_LOOKBACK = 48  # за сколько часов брать новости
+HOURS_LOOKBACK = 168  # 7 дней — чтобы не пропускать новости из редко обновляемых лент
 
 
-def matches_filters(title: str, summary: str) -> bool:
+def matches_filters(title: str, summary: str, already_country_specific: bool) -> bool:
     text = f"{title} {summary}".lower()
+    has_economy = any(kw.lower() in text for kw in ECONOMY_KEYWORDS)
+    if already_country_specific:
+        return has_economy
     has_country = any(kw in text for kw in COUNTRY_KEYWORDS)
-    has_economy = any(kw in text for kw in ECONOMY_KEYWORDS)
     return has_country and has_economy
 
 
@@ -69,23 +104,35 @@ def clean_html(raw: str) -> str:
 
 def collect_news() -> list[dict]:
     results = []
-    for source_name, url in FEEDS.items():
+    seen_links = set()
+
+    for feed_cfg in FEEDS:
+        source_name = feed_cfg["name"]
+        url = feed_cfg["url"]
+        already_country_specific = feed_cfg["already_country_specific"]
+
         try:
             feed = feedparser.parse(url)
         except Exception as e:
             print(f"Не удалось загрузить {source_name}: {e}", file=sys.stderr)
             continue
 
+        if getattr(feed, "bozo", False) and not feed.entries:
+            print(f"Лента {source_name} не вернула записей (bozo={feed.bozo})", file=sys.stderr)
+
         for entry in feed.entries:
             title = entry.get("title", "")
             summary = clean_html(entry.get("summary", ""))
             link = entry.get("link", "")
 
-            if not matches_filters(title, summary):
+            if not link or link in seen_links:
+                continue
+            if not matches_filters(title, summary, already_country_specific):
                 continue
             if not entry_is_recent(entry):
                 continue
 
+            seen_links.add(link)
             results.append({
                 "source": source_name,
                 "title": title,
@@ -98,8 +145,8 @@ def collect_news() -> list[dict]:
 def format_digest(items: list[dict]) -> str:
     if not items:
         return (
-            "За последние сутки не найдено новостей об экономике "
-            "Узбекистана в отслеживаемых зарубежных источниках."
+            f"За последние {HOURS_LOOKBACK} ч. не найдено новостей об "
+            "экономике Узбекистана в отслеживаемых зарубежных источниках."
         )
 
     lines = []

@@ -3,23 +3,25 @@
 из зарубежных СМИ — без платного Anthropic API.
 
 Как это работает:
-- Скрипт читает RSS-ленты нескольких зарубежных изданий/агентств
-- Для лент, посвящённых конкретно Узбекистану (RFE/RL, Eurasianet),
-  фильтрует только по экономическим ключевым словам
-- Для общих региональных лент требует совпадение и по стране,
-  и по экономическому термину
-- Формирует один HTML-файл со списком ссылок, сгруппированных по источнику
-- Отправляет этот файл в Telegram как вложение (документ)
+- Скрипт запрашивает Google News RSS (поиск по ключевым словам) —
+  это бесплатный агрегатор, который сам собирает статьи с десятков
+  зарубежных изданий по заданному запросу
+- Результаты с доменами .uz (местные узбекские сайты) отфильтровываются,
+  остаются только зарубежные источники
+- Если с первого запроса набралось меньше 7 новостей, период поиска
+  автоматически расширяется, чтобы гарантированно набрать 7-10 новостей
+- Формируется один HTML-файл со списком ссылок
+- Файл отправляется в Telegram как вложение (документ)
 
-Ничего не стоит: RSS-ленты бесплатны, Telegram Bot API бесплатен,
-GitHub Actions бесплатен (в пределах щедрого лимита минут в месяц).
+Ничего не стоит: Google News RSS бесплатен без ключей и регистрации,
+Telegram Bot API бесплатен, GitHub Actions бесплатен.
 """
 
 import os
 import sys
 import re
 from datetime import datetime, timedelta, timezone
-from collections import defaultdict
+from urllib.parse import quote, urlparse
 
 import feedparser
 import requests
@@ -27,128 +29,114 @@ import requests
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-# --- Зарубежные RSS-ленты ---
-# already_country_specific=True — лента и так посвящена Узбекистану,
-# дополнительно искать слово "Узбекистан" в тексте не нужно, хватит
-# экономического ключевого слова.
-FEEDS = [
-    {
-        "name": "RFE/RL — Узбекистан (Радио Озодлик)",
-        "url": "https://www.rferl.org/api/ztiiml-vomx-tpekgm_",
-        "already_country_specific": True,
-    },
-    {
-        "name": "Eurasianet — Узбекистан",
-        "url": "https://eurasianet.org/region/uzbekistan/feed",
-        "already_country_specific": True,
-    },
-    {
-        "name": "Times of Central Asia",
-        "url": "https://timesca.com/feed",
-        "already_country_specific": False,
-    },
-    {
-        "name": "The Diplomat",
-        "url": "https://thediplomat.com/feed/",
-        "already_country_specific": False,
-    },
-    {
-        "name": "AKIpress",
-        "url": "https://akipress.com/rss/news.rss",
-        "already_country_specific": False,
-    },
-    {
-        "name": "Silk Road Briefing",
-        "url": "https://www.silkroadbriefing.com/news/feed/",
-        "already_country_specific": False,
-    },
+# --- Поисковые запросы к Google News (широкий охват тем, чтобы за 2 дня
+#     гарантированно набиралось 7-10 новостей) ---
+SEARCH_QUERIES = [
+    ("Uzbekistan economy", "en"),
+    ("Uzbekistan investment", "en"),
+    ("Uzbekistan trade", "en"),
+    ("Uzbekistan GDP", "en"),
+    ("Uzbekistan currency", "en"),
+    ("Uzbekistan banking", "en"),
+    ("Uzbekistan export", "en"),
+    ("Uzbekistan IMF", "en"),
+    ("Uzbekistan finance minister", "en"),
+    ("Tashkent stock exchange", "en"),
+    ("Узбекистан экономика", "ru"),
+    ("Узбекистан инвестиции", "ru"),
+    ("Узбекистан торговля", "ru"),
+    ("Узбекистан валюта", "ru"),
+    ("Узбекистан бюджет", "ru"),
 ]
 
-# --- Ключевые слова для фильтрации (регистр не важен) ---
-COUNTRY_KEYWORDS = ["uzbekistan", "узбекистан", "tashkent", "ташкент", "uzbek"]
-ECONOMY_KEYWORDS = [
-    "econom", "экономик", "gdp", "ввп", "inflation", "инфляц",
-    "trade", "торгов", "investment", "инвестиц", "export", "экспорт",
-    "import", "импорт", "bank", "банк", "currency", "валют", "sum ",
-    "budget", "бюджет", "finance", "финанс", "market", "рынок",
-    "reform", "реформ", "industry", "промышленн", "energy", "энергет",
-    "gas", "газ", "oil", "нефт", "cotton", "хлопок", "gold", "золот",
-    "loan", "кредит", "debt", "долг", "tax", "налог", "privatiz",
-    "приватизац", "IMF", "МВФ", "World Bank", "Всемирный банк",
-    "growth", "рост экономики", "price", "цен",
-]
+# Локальные домены Узбекистана, которые исключаем (нужны только зарубежные)
+LOCAL_DOMAINS_TO_EXCLUDE = [".uz"]
 
-HOURS_LOOKBACK = 168  # 7 дней — чтобы не пропускать новости из редко обновляемых лент
+MIN_ITEMS = 7
+MAX_ITEMS = 10
+
+# Фиксированный период поиска — 2 дня. Если вдруг совсем не наберётся
+# MIN_ITEMS, скрипт один раз подстрахуется и заглянет на 4 дня назад,
+# но это резервный вариант, а не обычный режим работы.
+LOOKBACK_STAGES_DAYS = [2, 4]
 
 
-def matches_filters(title: str, summary: str, already_country_specific: bool) -> bool:
-    text = f"{title} {summary}".lower()
-    has_economy = any(kw.lower() in text for kw in ECONOMY_KEYWORDS)
-    if already_country_specific:
-        return has_economy
-    has_country = any(kw in text for kw in COUNTRY_KEYWORDS)
-    return has_country and has_economy
+def google_news_rss_url(query: str, lang: str, days: int) -> str:
+    # "when:Xd" — встроенный фильтр Google News по давности публикации
+    q = f"{query} when:{days}d"
+    encoded_q = quote(q)
+    if lang == "ru":
+        return f"https://news.google.com/rss/search?q={encoded_q}&hl=ru&gl=UZ&ceid=UZ:ru"
+    return f"https://news.google.com/rss/search?q={encoded_q}&hl=en-US&gl=US&ceid=US:en"
 
 
-def entry_is_recent(entry) -> bool:
-    time_struct = entry.get("published_parsed") or entry.get("updated_parsed")
-    if not time_struct:
-        return True  # если дата не указана, не отбрасываем — лучше показать
-    published = datetime(*time_struct[:6], tzinfo=timezone.utc)
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS_LOOKBACK)
-    return published >= cutoff
+def is_local_domain(link: str) -> bool:
+    try:
+        host = urlparse(link).netloc.lower()
+    except Exception:
+        return False
+    return any(host.endswith(d) for d in LOCAL_DOMAINS_TO_EXCLUDE)
 
 
-def clean_html(raw: str) -> str:
-    return re.sub("<[^<]+?>", "", raw or "").strip()
+def extract_source_name(entry, link: str) -> str:
+    # У Google News записи часто есть entry.source.title
+    source = entry.get("source")
+    if source and isinstance(source, dict) and source.get("title"):
+        return source["title"]
+    try:
+        return urlparse(link).netloc.replace("www.", "")
+    except Exception:
+        return "Источник"
 
 
-def collect_news() -> list[dict]:
+def fetch_for_days(days: int) -> list[dict]:
     results = []
     seen_links = set()
 
-    for feed_cfg in FEEDS:
-        source_name = feed_cfg["name"]
-        url = feed_cfg["url"]
-        already_country_specific = feed_cfg["already_country_specific"]
-
+    for query, lang in SEARCH_QUERIES:
+        url = google_news_rss_url(query, lang, days)
         try:
             feed = feedparser.parse(url)
         except Exception as e:
-            print(f"Не удалось загрузить {source_name}: {e}", file=sys.stderr)
+            print(f"Ошибка запроса '{query}' ({lang}): {e}", file=sys.stderr)
             continue
-
-        if getattr(feed, "bozo", False) and not feed.entries:
-            print(f"Лента {source_name} не вернула записей (bozo={feed.bozo})", file=sys.stderr)
 
         for entry in feed.entries:
             title = entry.get("title", "")
-            summary = clean_html(entry.get("summary", ""))
             link = entry.get("link", "")
 
             if not link or link in seen_links:
                 continue
-            if not matches_filters(title, summary, already_country_specific):
-                continue
-            if not entry_is_recent(entry):
+            if is_local_domain(link):
                 continue
 
             seen_links.add(link)
             results.append({
-                "source": source_name,
+                "source": extract_source_name(entry, link),
                 "title": title,
                 "link": link,
+                "published": entry.get("published_parsed"),
             })
 
+    # Сортировка по дате публикации (новые сверху), записи без даты — в конец
+    results.sort(
+        key=lambda x: x["published"] if x["published"] else (0,) * 9,
+        reverse=True,
+    )
     return results
+
+
+def collect_news() -> list[dict]:
+    for days in LOOKBACK_STAGES_DAYS:
+        items = fetch_for_days(days)
+        if len(items) >= MIN_ITEMS:
+            return items[:MAX_ITEMS]
+    # Если даже за 30 дней набралось меньше MIN_ITEMS — возвращаем что есть
+    return items[:MAX_ITEMS]
 
 
 def build_html_file(items: list[dict]) -> str:
     today_str = datetime.now(timezone.utc).strftime("%d.%m.%Y")
-
-    grouped = defaultdict(list)
-    for item in items:
-        grouped[item["source"]].append(item)
 
     html_parts = [
         "<!DOCTYPE html>",
@@ -159,11 +147,11 @@ def build_html_file(items: list[dict]) -> str:
         "<style>",
         "body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 16px; color: #222; }",
         "h1 { font-size: 20px; border-bottom: 2px solid #00244E; padding-bottom: 8px; }",
-        "h2 { font-size: 16px; color: #00244E; margin-top: 28px; }",
-        "ul { padding-left: 20px; }",
-        "li { margin-bottom: 10px; line-height: 1.4; }",
-        "a { color: #0645AD; text-decoration: none; }",
+        "ol { padding-left: 20px; }",
+        "li { margin-bottom: 14px; line-height: 1.4; }",
+        "a { color: #0645AD; text-decoration: none; font-weight: 600; }",
         "a:hover { text-decoration: underline; }",
+        ".source { color: #666; font-size: 13px; }",
         ".empty { color: #666; font-style: italic; }",
         "</style>",
         "</head>",
@@ -173,18 +161,19 @@ def build_html_file(items: list[dict]) -> str:
 
     if not items:
         html_parts.append(
-            f"<p class='empty'>За последние {HOURS_LOOKBACK} ч. не найдено новостей "
-            "об экономике Узбекистана в отслеживаемых зарубежных источниках.</p>"
+            "<p class='empty'>Не удалось найти новости об экономике Узбекистана "
+            "в зарубежных источниках за отслеживаемый период.</p>"
         )
     else:
-        for source_name, source_items in grouped.items():
-            html_parts.append(f"<h2>{source_name}</h2>")
-            html_parts.append("<ul>")
-            for item in source_items:
-                html_parts.append(
-                    f"<li><a href='{item['link']}'>{item['title']}</a></li>"
-                )
-            html_parts.append("</ul>")
+        html_parts.append("<ol>")
+        for item in items:
+            html_parts.append(
+                "<li>"
+                f"<a href='{item['link']}'>{item['title']}</a><br>"
+                f"<span class='source'>{item['source']}</span>"
+                "</li>"
+            )
+        html_parts.append("</ol>")
 
     html_parts.append("</body></html>")
 

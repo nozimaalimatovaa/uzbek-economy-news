@@ -2,8 +2,8 @@ name: Daily Uzbekistan Economy News Digest (Free)
 
 on:
   schedule:
-    # 03:30 UTC = 08:30 по Ташкенту (UTC+5, без перевода часов).
-    - cron: "30 3 * * *"
+    # 15:30 UTC = 20:30 по Ташкенту (UTC+5, без перевода часов).
+    - cron: "30 15 * * *"
   workflow_dispatch: {}
 
 jobs:

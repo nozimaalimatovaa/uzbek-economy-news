@@ -1,0 +1,28 @@
+name: Daily Uzbekistan Economy News Digest (Free)
+
+on:
+  schedule:
+    # 05:00 UTC = 10:00 по Ташкенту (UTC+5). Поменяйте под нужное вам утреннее время.
+    - cron: "0 5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-free.txt
+
+      - name: Run news digest script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python news_digest_free.py

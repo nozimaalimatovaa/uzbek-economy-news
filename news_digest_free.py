@@ -4,12 +4,12 @@
 
 Как это работает:
 - Скрипт читает RSS-ленты нескольких зарубежных изданий/агентств
-- Для лент, посвящённых конкретно Узбекистану (RFE/RL), фильтрует
-  только по экономическим ключевым словам
+- Для лент, посвящённых конкретно Узбекистану (RFE/RL, Eurasianet),
+  фильтрует только по экономическим ключевым словам
 - Для общих региональных лент требует совпадение и по стране,
   и по экономическому термину
-- Формирует список заголовков со ссылками, без пересказа
-- Отправляет в Telegram
+- Формирует один HTML-файл со списком ссылок, сгруппированных по источнику
+- Отправляет этот файл в Telegram как вложение (документ)
 
 Ничего не стоит: RSS-ленты бесплатны, Telegram Bot API бесплатен,
 GitHub Actions бесплатен (в пределах щедрого лимита минут в месяц).
@@ -19,6 +19,7 @@ import os
 import sys
 import re
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict
 
 import feedparser
 import requests
@@ -42,7 +43,7 @@ FEEDS = [
         "already_country_specific": True,
     },
     {
-        "name": "Times of Central Asia — Узбекистан",
+        "name": "Times of Central Asia",
         "url": "https://timesca.com/feed",
         "already_country_specific": False,
     },
@@ -142,46 +143,81 @@ def collect_news() -> list[dict]:
     return results
 
 
-def format_digest(items: list[dict]) -> str:
-    if not items:
-        return (
-            f"За последние {HOURS_LOOKBACK} ч. не найдено новостей об "
-            "экономике Узбекистана в отслеживаемых зарубежных источниках."
-        )
+def build_html_file(items: list[dict]) -> str:
+    today_str = datetime.now(timezone.utc).strftime("%d.%m.%Y")
 
-    lines = []
+    grouped = defaultdict(list)
     for item in items:
-        lines.append(f"{item['title']} — {item['link']}")
+        grouped[item["source"]].append(item)
 
-    return "\n\n".join(lines)
+    html_parts = [
+        "<!DOCTYPE html>",
+        "<html lang='ru'>",
+        "<head>",
+        "<meta charset='utf-8'>",
+        f"<title>Экономика Узбекистана — {today_str}</title>",
+        "<style>",
+        "body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 16px; color: #222; }",
+        "h1 { font-size: 20px; border-bottom: 2px solid #00244E; padding-bottom: 8px; }",
+        "h2 { font-size: 16px; color: #00244E; margin-top: 28px; }",
+        "ul { padding-left: 20px; }",
+        "li { margin-bottom: 10px; line-height: 1.4; }",
+        "a { color: #0645AD; text-decoration: none; }",
+        "a:hover { text-decoration: underline; }",
+        ".empty { color: #666; font-style: italic; }",
+        "</style>",
+        "</head>",
+        "<body>",
+        f"<h1>Экономика Узбекистана — новости из зарубежных СМИ ({today_str})</h1>",
+    ]
+
+    if not items:
+        html_parts.append(
+            f"<p class='empty'>За последние {HOURS_LOOKBACK} ч. не найдено новостей "
+            "об экономике Узбекистана в отслеживаемых зарубежных источниках.</p>"
+        )
+    else:
+        for source_name, source_items in grouped.items():
+            html_parts.append(f"<h2>{source_name}</h2>")
+            html_parts.append("<ul>")
+            for item in source_items:
+                html_parts.append(
+                    f"<li><a href='{item['link']}'>{item['title']}</a></li>"
+                )
+            html_parts.append("</ul>")
+
+    html_parts.append("</body></html>")
+
+    file_path = "/tmp/uzbek_economy_digest.html"
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(html_parts))
+
+    return file_path
 
 
-def send_to_telegram(text: str) -> None:
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    max_len = 4000
-    chunks = [text[i:i + max_len] for i in range(0, len(text), max_len)] or [text]
+def send_file_to_telegram(file_path: str, caption: str) -> None:
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
 
-    for chunk in chunks:
+    with open(file_path, "rb") as f:
         resp = requests.post(
             url,
-            json={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": chunk,
-                "disable_web_page_preview": True,
-            },
-            timeout=30,
+            data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
+            files={"document": (os.path.basename(file_path), f, "text/html")},
+            timeout=60,
         )
-        if resp.status_code != 200:
-            print(f"Ошибка отправки в Telegram: {resp.status_code} {resp.text}", file=sys.stderr)
-            resp.raise_for_status()
+
+    if resp.status_code != 200:
+        print(f"Ошибка отправки файла в Telegram: {resp.status_code} {resp.text}", file=sys.stderr)
+        resp.raise_for_status()
 
 
 def main():
-    header = "Экономика Узбекистана — новости из зарубежных СМИ:\n\n"
+    today_str = datetime.now(timezone.utc).strftime("%d.%m.%Y")
     items = collect_news()
-    digest = format_digest(items)
-    send_to_telegram(header + digest)
-    print(f"Отправлено новостей: {len(items)}")
+    file_path = build_html_file(items)
+    caption = f"Экономика Узбекистана — сводка ссылок за {today_str} ({len(items)} новостей)"
+    send_file_to_telegram(file_path, caption)
+    print(f"Отправлен файл. Новостей: {len(items)}")
 
 
 if __name__ == "__main__":

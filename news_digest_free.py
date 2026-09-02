@@ -52,6 +52,10 @@ SEARCH_QUERIES = [
 # Локальные домены Узбекистана, которые исключаем (нужны только зарубежные)
 LOCAL_DOMAINS_TO_EXCLUDE = [".uz"]
 
+# Названия источников, которые тоже считаем локальными (подстраховка,
+# на случай если домен определить не удалось)
+LOCAL_SOURCE_NAME_MARKERS = [".uz", "uzbekistan today", "kun.uz", "gazeta.uz", "podrobno.uz", "spot.uz", "daryo.uz"]
+
 MIN_ITEMS = 7
 MAX_ITEMS = 10
 
@@ -70,9 +74,19 @@ def google_news_rss_url(query: str, lang: str, days: int) -> str:
     return f"https://news.google.com/rss/search?q={encoded_q}&hl=en-US&gl=US&ceid=US:en"
 
 
-def is_local_domain(link: str) -> bool:
+def is_local_domain(entry, link: str) -> bool:
+    # У Google News реальная ссылка на источник обычно в entry.source.href,
+    # а entry.link — это редирект через news.google.com, поэтому домен
+    # нужно проверять именно по source.href, если он есть.
+    source = entry.get("source")
+    candidate = None
+    if source and isinstance(source, dict) and source.get("href"):
+        candidate = source["href"]
+    else:
+        candidate = link
+
     try:
-        host = urlparse(link).netloc.lower()
+        host = urlparse(candidate).netloc.lower()
     except Exception:
         return False
     return any(host.endswith(d) for d in LOCAL_DOMAINS_TO_EXCLUDE)
@@ -83,8 +97,11 @@ def extract_source_name(entry, link: str) -> str:
     source = entry.get("source")
     if source and isinstance(source, dict) and source.get("title"):
         return source["title"]
+    candidate = link
+    if source and isinstance(source, dict) and source.get("href"):
+        candidate = source["href"]
     try:
-        return urlparse(link).netloc.replace("www.", "")
+        return urlparse(candidate).netloc.replace("www.", "")
     except Exception:
         return "Источник"
 
@@ -107,12 +124,15 @@ def fetch_for_days(days: int) -> list[dict]:
 
             if not link or link in seen_links:
                 continue
-            if is_local_domain(link):
+            if is_local_domain(entry, link):
+                continue
+            source_name = extract_source_name(entry, link)
+            if any(marker in source_name.lower() for marker in LOCAL_SOURCE_NAME_MARKERS):
                 continue
 
             seen_links.add(link)
             results.append({
-                "source": extract_source_name(entry, link),
+                "source": source_name,
                 "title": title,
                 "link": link,
                 "published": entry.get("published_parsed"),

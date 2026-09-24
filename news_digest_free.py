@@ -19,6 +19,7 @@ Telegram Bot API бесплатен, GitHub Actions бесплатен.
 """
 
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
@@ -152,6 +153,43 @@ LOCAL_SOURCE_NAME_MARKERS = [
     "podrobno.uz", "spot.uz", "daryo.uz",
 ]
 
+# Заголовок/описание должны содержать хотя бы одно из этих слов —
+# иначе это не про экономику/финансы, а что-то постороннее
+# (например, новость про спорт или культуру, где просто упомянут Узбекистан)
+ECONOMY_KEYWORDS = [
+    "econom", "экономик", "gdp", "ввп", "inflation", "инфляц",
+    "trade", "торгов", "invest", "инвестиц", "export", "экспорт",
+    "import", "импорт", "bank", "банк", "currency", "валют", "sum ",
+    "budget", "бюджет", "financ", "финанс", "market", "рынок",
+    "reform", "реформ", "industry", "промышленн", "energy", "энергет",
+    "gas", "газ", "oil", "нефт", "cotton", "хлопок", "gold", "золот",
+    "loan", "кредит", "debt", "долг", "tax", "налог", "privatiz",
+    "приватизац", "imf", "мвф", "world bank", "всемирный банк",
+    "growth", "рост экономики", "price", "цен", "gdp", "rating",
+    "рейтинг", "bond", "облигац", "tariff", "тариф", "customs",
+    "таможн", "remittance", "денежные переводы", "employment",
+    "занятост", "labor market", "рынок труда", "fintech", "финтех",
+    "real estate", "недвижимост", "infrastructure", "инфраструктур",
+    "fdi", "foreign direct investment", "прямые иностранные инвестиции",
+    "interest rate", "процентная ставка", "ipo", "stock exchange",
+    "фондовая биржа", "wto", "вто", "sme", "малый бизнес",
+]
+
+# Слова-маркеры того, что это НЕ новость, а вакансия/тендер/объявление
+# о наборе персонала — такие материалы исключаем, даже если экономические
+# слова тоже встречаются (например, "Economist position at ADB")
+EXCLUDE_KEYWORDS = [
+    "vacanc", "job opening", "job posting", "we are hiring", "is hiring",
+    "career opportunit", "recruitment", "recruiting", "apply now",
+    "internship", "intern position", "consultant position",
+    "individual consultant", "terms of reference", "request for proposal",
+    "procurement notice", "invitation to bid", "tender notice",
+    "expression of interest", "call for applications", "job vacancy",
+    "employment opportunity", "staff position", "вакансия", "вакансии",
+    "набор персонала", "ищем сотрудника", "требуется", "конкурс на замещение",
+    "тендер", "закупк",
+]
+
 MIN_ITEMS = 7
 MAX_ITEMS = 30  # сводка для министра — полнота важнее краткости
 
@@ -199,6 +237,20 @@ def extract_source_name(entry, link: str) -> str:
         return "Источник"
 
 
+def clean_html(raw: str) -> str:
+    return re.sub("<[^<]+?>", "", raw or "").strip()
+
+
+def is_about_economy(title: str, summary: str) -> bool:
+    text = f"{title} {summary}".lower()
+    return any(kw.lower() in text for kw in ECONOMY_KEYWORDS)
+
+
+def is_excluded(title: str, summary: str) -> bool:
+    text = f"{title} {summary}".lower()
+    return any(kw.lower() in text for kw in EXCLUDE_KEYWORDS)
+
+
 def fetch_for_days(days: int) -> list[dict]:
     results = []
     seen_links = set()
@@ -213,6 +265,7 @@ def fetch_for_days(days: int) -> list[dict]:
 
         for entry in feed.entries:
             title = entry.get("title", "")
+            summary = clean_html(entry.get("summary", ""))
             link = entry.get("link", "")
 
             if not link or link in seen_links:
@@ -222,6 +275,11 @@ def fetch_for_days(days: int) -> list[dict]:
 
             source_name = extract_source_name(entry, link)
             if any(marker in source_name.lower() for marker in LOCAL_SOURCE_NAME_MARKERS):
+                continue
+
+            if is_excluded(title, summary):
+                continue
+            if not is_about_economy(title, summary):
                 continue
 
             seen_links.add(link)

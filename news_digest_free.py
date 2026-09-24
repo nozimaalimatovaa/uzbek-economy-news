@@ -51,6 +51,17 @@ GENERAL_QUERIES = [
     ("Узбекистан торговля", "ru"),
     ("Узбекистан валюта", "ru"),
     ("Узбекистан бюджет", "ru"),
+    # --- Центральная Азия в целом (регион, где Узбекистан — часть контекста) ---
+    ("Central Asia economy", "en"),
+    ("Central Asia investment", "en"),
+    ("Central Asia trade", "en"),
+    ("Central Asia energy", "en"),
+    ("Central Asia IMF", "en"),
+    ("Central Asia World Bank", "en"),
+    ("Central Asia China trade", "en"),
+    ("Центральная Азия экономика", "ru"),
+    ("Центральная Азия инвестиции", "ru"),
+    ("Центральная Азия торговля", "ru"),
 ]
 
 # --- Прицельные запросы по сайтам конкретных международных организаций ---

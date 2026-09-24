@@ -1,15 +1,16 @@
 """
 БЕСПЛАТНАЯ версия: ежедневная сводка новостей об экономике Узбекистана
-из зарубежных СМИ — без платного Anthropic API.
+из зарубежных СМИ и международных организаций — без платного Anthropic API.
 
 Как это работает:
 - Скрипт запрашивает Google News RSS (поиск по ключевым словам) —
   это бесплатный агрегатор, который сам собирает статьи с десятков
   зарубежных изданий по заданному запросу
+- Отдельно добавлены прицельные запросы по сайтам конкретных
+  международных организаций (World Bank, ADB, IMF, EBRD, UN и др.)
+  через оператор site: в Google News
 - Результаты с доменами .uz (местные узбекские сайты) отфильтровываются,
   остаются только зарубежные источники
-- Если с первого запроса набралось меньше 7 новостей, период поиска
-  автоматически расширяется, чтобы гарантированно набрать 7-10 новостей
 - Формируется один HTML-файл со списком ссылок
 - Файл отправляется в Telegram как вложение (документ)
 
@@ -19,8 +20,7 @@ Telegram Bot API бесплатен, GitHub Actions бесплатен.
 
 import os
 import sys
-import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 
 import feedparser
@@ -29,9 +29,8 @@ import requests
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-# --- Поисковые запросы к Google News (широкий охват тем, чтобы за 2 дня
-#     гарантированно набиралось 7-10 новостей) ---
-SEARCH_QUERIES = [
+# --- Общие поисковые запросы к Google News (широкий охват тем) ---
+GENERAL_QUERIES = [
     ("Uzbekistan economy", "en"),
     ("Uzbekistan investment", "en"),
     ("Uzbekistan trade", "en"),
@@ -42,6 +41,11 @@ SEARCH_QUERIES = [
     ("Uzbekistan IMF", "en"),
     ("Uzbekistan finance minister", "en"),
     ("Tashkent stock exchange", "en"),
+    ("Uzbekistan World Bank", "en"),
+    ("Uzbekistan Asian Development Bank", "en"),
+    ("Uzbekistan EBRD", "en"),
+    ("Uzbekistan sovereign bond", "en"),
+    ("Uzbekistan privatization", "en"),
     ("Узбекистан экономика", "ru"),
     ("Узбекистан инвестиции", "ru"),
     ("Узбекистан торговля", "ru"),
@@ -49,19 +53,40 @@ SEARCH_QUERIES = [
     ("Узбекистан бюджет", "ru"),
 ]
 
+# --- Прицельные запросы по сайтам конкретных международных организаций ---
+# Google News поддерживает оператор site: прямо в поисковой строке
+ORG_SITES = [
+    "worldbank.org",
+    "adb.org",
+    "imf.org",
+    "ebrd.com",
+    "unece.org",
+    "undp.org",
+    "eurasia.undp.org",
+    "oecd.org",
+]
+
+ORG_QUERIES = [
+    (f"Uzbekistan site:{site}", "en") for site in ORG_SITES
+]
+
+SEARCH_QUERIES = GENERAL_QUERIES + ORG_QUERIES
+
 # Локальные домены Узбекистана, которые исключаем (нужны только зарубежные)
 LOCAL_DOMAINS_TO_EXCLUDE = [".uz"]
 
 # Названия источников, которые тоже считаем локальными (подстраховка,
 # на случай если домен определить не удалось)
-LOCAL_SOURCE_NAME_MARKERS = [".uz", "uzbekistan today", "kun.uz", "gazeta.uz", "podrobno.uz", "spot.uz", "daryo.uz"]
+LOCAL_SOURCE_NAME_MARKERS = [
+    ".uz", "uzbekistan today", "kun.uz", "gazeta.uz",
+    "podrobno.uz", "spot.uz", "daryo.uz",
+]
 
 MIN_ITEMS = 7
-MAX_ITEMS = 10
+MAX_ITEMS = 15
 
-# Фиксированный период поиска — 2 дня. Если вдруг совсем не наберётся
-# MIN_ITEMS, скрипт один раз подстрахуется и заглянет на 4 дня назад,
-# но это резервный вариант, а не обычный режим работы.
+# Периоды поиска: основной — 2 дня; если совсем ничего не наберётся,
+# один раз подстрахуемся и заглянем на 4 дня назад.
 LOOKBACK_STAGES_DAYS = [2, 4]
 
 
@@ -79,11 +104,9 @@ def is_local_domain(entry, link: str) -> bool:
     # а entry.link — это редирект через news.google.com, поэтому домен
     # нужно проверять именно по source.href, если он есть.
     source = entry.get("source")
-    candidate = None
+    candidate = link
     if source and isinstance(source, dict) and source.get("href"):
         candidate = source["href"]
-    else:
-        candidate = link
 
     try:
         host = urlparse(candidate).netloc.lower()
@@ -126,6 +149,7 @@ def fetch_for_days(days: int) -> list[dict]:
                 continue
             if is_local_domain(entry, link):
                 continue
+
             source_name = extract_source_name(entry, link)
             if any(marker in source_name.lower() for marker in LOCAL_SOURCE_NAME_MARKERS):
                 continue
@@ -147,11 +171,11 @@ def fetch_for_days(days: int) -> list[dict]:
 
 
 def collect_news() -> list[dict]:
+    items = []
     for days in LOOKBACK_STAGES_DAYS:
         items = fetch_for_days(days)
         if len(items) >= MIN_ITEMS:
-            return items[:MAX_ITEMS]
-    # Если даже за 30 дней набралось меньше MIN_ITEMS — возвращаем что есть
+            break
     return items[:MAX_ITEMS]
 
 
@@ -176,7 +200,7 @@ def build_html_file(items: list[dict]) -> str:
         "</style>",
         "</head>",
         "<body>",
-        f"<h1>Экономика Узбекистана — новости из зарубежных СМИ ({today_str})</h1>",
+        f"<h1>Экономика Узбекистана — новости из зарубежных СМИ и международных организаций ({today_str})</h1>",
     ]
 
     if not items:

@@ -29,39 +29,80 @@ import requests
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
+# Каждый запрос — (текст запроса, язык, категория для группировки в сводке)
+CAT_GENERAL = "Экономика и финансы Узбекистана"
+CAT_REGION = "Центральная Азия"
+CAT_ORG = "Международные организации"
+CAT_PRESS = "Деловые издания и рейтинговые агентства"
+
 # --- Общие поисковые запросы к Google News (широкий охват тем) ---
 GENERAL_QUERIES = [
-    ("Uzbekistan economy", "en"),
-    ("Uzbekistan investment", "en"),
-    ("Uzbekistan trade", "en"),
-    ("Uzbekistan GDP", "en"),
-    ("Uzbekistan currency", "en"),
-    ("Uzbekistan banking", "en"),
-    ("Uzbekistan export", "en"),
-    ("Uzbekistan IMF", "en"),
-    ("Uzbekistan finance minister", "en"),
-    ("Tashkent stock exchange", "en"),
-    ("Uzbekistan World Bank", "en"),
-    ("Uzbekistan Asian Development Bank", "en"),
-    ("Uzbekistan EBRD", "en"),
-    ("Uzbekistan sovereign bond", "en"),
-    ("Uzbekistan privatization", "en"),
-    ("Узбекистан экономика", "ru"),
-    ("Узбекистан инвестиции", "ru"),
-    ("Узбекистан торговля", "ru"),
-    ("Узбекистан валюта", "ru"),
-    ("Узбекистан бюджет", "ru"),
-    # --- Центральная Азия в целом (регион, где Узбекистан — часть контекста) ---
-    ("Central Asia economy", "en"),
-    ("Central Asia investment", "en"),
-    ("Central Asia trade", "en"),
-    ("Central Asia energy", "en"),
-    ("Central Asia IMF", "en"),
-    ("Central Asia World Bank", "en"),
-    ("Central Asia China trade", "en"),
-    ("Центральная Азия экономика", "ru"),
-    ("Центральная Азия инвестиции", "ru"),
-    ("Центральная Азия торговля", "ru"),
+    ("Uzbekistan economy", "en", CAT_GENERAL),
+    ("Uzbekistan investment", "en", CAT_GENERAL),
+    ("Uzbekistan trade", "en", CAT_GENERAL),
+    ("Uzbekistan GDP", "en", CAT_GENERAL),
+    ("Uzbekistan currency", "en", CAT_GENERAL),
+    ("Uzbekistan banking", "en", CAT_GENERAL),
+    ("Uzbekistan export", "en", CAT_GENERAL),
+    ("Uzbekistan IMF", "en", CAT_GENERAL),
+    ("Uzbekistan finance minister", "en", CAT_GENERAL),
+    ("Tashkent stock exchange", "en", CAT_GENERAL),
+    ("Uzbekistan World Bank", "en", CAT_GENERAL),
+    ("Uzbekistan Asian Development Bank", "en", CAT_GENERAL),
+    ("Uzbekistan EBRD", "en", CAT_GENERAL),
+    ("Uzbekistan sovereign bond", "en", CAT_GENERAL),
+    ("Uzbekistan privatization", "en", CAT_GENERAL),
+    ("Uzbekistan credit rating", "en", CAT_GENERAL),
+    ("Uzbekistan Moody's", "en", CAT_GENERAL),
+    ("Uzbekistan S&P Global", "en", CAT_GENERAL),
+    ("Uzbekistan Fitch Ratings", "en", CAT_GENERAL),
+    ("Uzbekistan agriculture export", "en", CAT_GENERAL),
+    ("Uzbekistan textile industry", "en", CAT_GENERAL),
+    ("Uzbekistan mining minerals", "en", CAT_GENERAL),
+    ("Uzbekistan gold reserves", "en", CAT_GENERAL),
+    ("Uzbekistan tourism revenue", "en", CAT_GENERAL),
+    ("Uzbekistan free economic zone", "en", CAT_GENERAL),
+    ("Uzbekistan WTO accession", "en", CAT_GENERAL),
+    ("Uzbekistan customs tariff", "en", CAT_GENERAL),
+    ("Uzbekistan remittances", "en", CAT_GENERAL),
+    ("Uzbekistan labor market employment", "en", CAT_GENERAL),
+    ("Uzbekistan digital economy fintech", "en", CAT_GENERAL),
+    ("Uzbekistan real estate market", "en", CAT_GENERAL),
+    ("Uzbekistan energy sector reform", "en", CAT_GENERAL),
+    ("Uzbekistan renewable energy solar", "en", CAT_GENERAL),
+    ("Uzbekistan railway infrastructure", "en", CAT_GENERAL),
+    ("Uzbekistan foreign direct investment", "en", CAT_GENERAL),
+    ("Uzbekistan central bank interest rate", "en", CAT_GENERAL),
+    ("Uzbekistan inflation rate", "en", CAT_GENERAL),
+    ("Uzbekistan state budget deficit", "en", CAT_GENERAL),
+    ("Uzbekistan IPO", "en", CAT_GENERAL),
+    ("Узбекистан экономика", "ru", CAT_GENERAL),
+    ("Узбекистан инвестиции", "ru", CAT_GENERAL),
+    ("Узбекистан торговля", "ru", CAT_GENERAL),
+    ("Узбекистан валюта", "ru", CAT_GENERAL),
+    ("Узбекистан бюджет", "ru", CAT_GENERAL),
+    ("Узбекистан кредитный рейтинг", "ru", CAT_GENERAL),
+    ("Узбекистан промышленность", "ru", CAT_GENERAL),
+    ("Узбекистан сельское хозяйство экспорт", "ru", CAT_GENERAL),
+    ("Узбекистан туризм", "ru", CAT_GENERAL),
+    ("Узбекистан центральный банк ставка", "ru", CAT_GENERAL),
+    ("Узбекистан инфляция", "ru", CAT_GENERAL),
+    ("Узбекистан IPO биржа", "ru", CAT_GENERAL),
+    ("Узбекистан иностранные инвестиции", "ru", CAT_GENERAL),
+]
+
+# --- Центральная Азия в целом (регион, где Узбекистан — часть контекста) ---
+REGION_QUERIES = [
+    ("Central Asia economy", "en", CAT_REGION),
+    ("Central Asia investment", "en", CAT_REGION),
+    ("Central Asia trade", "en", CAT_REGION),
+    ("Central Asia energy", "en", CAT_REGION),
+    ("Central Asia IMF", "en", CAT_REGION),
+    ("Central Asia World Bank", "en", CAT_REGION),
+    ("Central Asia China trade", "en", CAT_REGION),
+    ("Центральная Азия экономика", "ru", CAT_REGION),
+    ("Центральная Азия инвестиции", "ru", CAT_REGION),
+    ("Центральная Азия торговля", "ru", CAT_REGION),
 ]
 
 # --- Прицельные запросы по сайтам конкретных международных организаций ---
@@ -78,10 +119,28 @@ ORG_SITES = [
 ]
 
 ORG_QUERIES = [
-    (f"Uzbekistan site:{site}", "en") for site in ORG_SITES
+    (f"Uzbekistan site:{site}", "en", CAT_ORG) for site in ORG_SITES
 ]
 
-SEARCH_QUERIES = GENERAL_QUERIES + ORG_QUERIES
+# --- Прицельный поиск по крупным зарубежным финансовым/деловым изданиям
+#     и рейтинговым агентствам ---
+NEWS_SITES = [
+    "reuters.com",
+    "bloomberg.com",
+    "ft.com",
+    "economist.com",
+    "wsj.com",
+    "spglobal.com",
+    "moodys.com",
+    "fitchratings.com",
+    "cbonds.com",
+]
+
+NEWS_SITE_QUERIES = [
+    (f"Uzbekistan site:{site}", "en", CAT_PRESS) for site in NEWS_SITES
+]
+
+SEARCH_QUERIES = GENERAL_QUERIES + REGION_QUERIES + ORG_QUERIES + NEWS_SITE_QUERIES
 
 # Локальные домены Узбекистана, которые исключаем (нужны только зарубежные)
 LOCAL_DOMAINS_TO_EXCLUDE = [".uz"]
@@ -94,7 +153,7 @@ LOCAL_SOURCE_NAME_MARKERS = [
 ]
 
 MIN_ITEMS = 7
-MAX_ITEMS = 15
+MAX_ITEMS = 30  # сводка для министра — полнота важнее краткости
 
 # Периоды поиска: основной — 2 дня; если совсем ничего не наберётся,
 # один раз подстрахуемся и заглянем на 4 дня назад.
@@ -144,7 +203,7 @@ def fetch_for_days(days: int) -> list[dict]:
     results = []
     seen_links = set()
 
-    for query, lang in SEARCH_QUERIES:
+    for query, lang, category in SEARCH_QUERIES:
         url = google_news_rss_url(query, lang, days)
         try:
             feed = feedparser.parse(url)
@@ -171,6 +230,7 @@ def fetch_for_days(days: int) -> list[dict]:
                 "title": title,
                 "link": link,
                 "published": entry.get("published_parsed"),
+                "category": category,
             })
 
     # Сортировка по дате публикации (новые сверху), записи без даты — в конец
@@ -187,11 +247,26 @@ def collect_news() -> list[dict]:
         items = fetch_for_days(days)
         if len(items) >= MIN_ITEMS:
             break
-    return items[:MAX_ITEMS]
+
+    # Приоритет: все новости от международных организаций и деловых изданий
+    # сохраняем целиком (их обычно немного, но они самые ценные для сводки),
+    # а оставшееся место заполняем общими новостями по Узбекистану и региону.
+    priority_categories = {CAT_ORG, CAT_PRESS}
+    priority_items = [i for i in items if i["category"] in priority_categories]
+    other_items = [i for i in items if i["category"] not in priority_categories]
+
+    remaining_slots = max(MAX_ITEMS - len(priority_items), 0)
+    return priority_items + other_items[:remaining_slots]
 
 
 def build_html_file(items: list[dict]) -> str:
     today_str = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+
+    # Группировка по категориям, порядок категорий фиксированный и осмысленный
+    category_order = [CAT_ORG, CAT_PRESS, CAT_GENERAL, CAT_REGION]
+    grouped: dict[str, list[dict]] = {cat: [] for cat in category_order}
+    for item in items:
+        grouped.setdefault(item.get("category", CAT_GENERAL), []).append(item)
 
     html_parts = [
         "<!DOCTYPE html>",
@@ -202,6 +277,7 @@ def build_html_file(items: list[dict]) -> str:
         "<style>",
         "body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 16px; color: #222; }",
         "h1 { font-size: 20px; border-bottom: 2px solid #00244E; padding-bottom: 8px; }",
+        "h2 { font-size: 16px; color: #00244E; margin-top: 26px; border-left: 4px solid #cfb082; padding-left: 8px; }",
         "ol { padding-left: 20px; }",
         "li { margin-bottom: 14px; line-height: 1.4; }",
         "a { color: #0645AD; text-decoration: none; font-weight: 600; }",
@@ -220,15 +296,20 @@ def build_html_file(items: list[dict]) -> str:
             "в зарубежных источниках за отслеживаемый период.</p>"
         )
     else:
-        html_parts.append("<ol>")
-        for item in items:
-            html_parts.append(
-                "<li>"
-                f"<a href='{item['link']}'>{item['title']}</a><br>"
-                f"<span class='source'>{item['source']}</span>"
-                "</li>"
-            )
-        html_parts.append("</ol>")
+        for category in category_order:
+            cat_items = grouped.get(category, [])
+            if not cat_items:
+                continue
+            html_parts.append(f"<h2>{category}</h2>")
+            html_parts.append("<ol>")
+            for item in cat_items:
+                html_parts.append(
+                    "<li>"
+                    f"<a href='{item['link']}'>{item['title']}</a><br>"
+                    f"<span class='source'>{item['source']}</span>"
+                    "</li>"
+                )
+            html_parts.append("</ol>")
 
     html_parts.append("</body></html>")
 

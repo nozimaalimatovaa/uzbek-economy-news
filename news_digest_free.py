@@ -175,6 +175,19 @@ ECONOMY_KEYWORDS = [
     "фондовая биржа", "wto", "вто", "sme", "малый бизнес",
 ]
 
+# Заголовок/описание должны содержать хотя бы одно из этих слов — иначе
+# новость не про Узбекистан и не про Центральную Азию, отбрасываем её,
+# даже если по остальным критериям (экономика, не вакансия) она подходит.
+# Google News иногда возвращает статьи без точного совпадения фразы запроса,
+# поэтому эта проверка обязательна и применяется ко ВСЕМ результатам,
+# включая прицельные запросы site:worldbank.org и подобные.
+COUNTRY_OR_REGION_KEYWORDS = [
+    "uzbekistan", "узбекистан", "tashkent", "ташкент", "uzbek",
+    "central asia", "центральная азия", "центральноазиат",
+    "kazakhstan", "казахстан", "kyrgyzstan", "кыргызстан", "киргизия",
+    "tajikistan", "таджикистан", "turkmenistan", "туркменистан",
+]
+
 # Слова-маркеры того, что это НЕ новость, а вакансия/тендер/объявление
 # о наборе персонала — такие материалы исключаем, даже если экономические
 # слова тоже встречаются (например, "Economist position at ADB")
@@ -190,12 +203,11 @@ EXCLUDE_KEYWORDS = [
     "тендер", "закупк",
 ]
 
-MIN_ITEMS = 7
 MAX_ITEMS = 30  # сводка для министра — полнота важнее краткости
 
-# Периоды поиска: основной — 2 дня; если совсем ничего не наберётся,
-# один раз подстрахуемся и заглянем на 4 дня назад.
-LOOKBACK_STAGES_DAYS = [2, 4]
+# Строго последние 2 дня — только самые свежие новости, без расширения
+# периода назад, даже если наберётся меньше MAX_ITEMS.
+LOOKBACK_STAGES_DAYS = [2]
 
 
 def google_news_rss_url(query: str, lang: str, days: int) -> str:
@@ -246,6 +258,11 @@ def is_about_economy(title: str, summary: str) -> bool:
     return any(kw.lower() in text for kw in ECONOMY_KEYWORDS)
 
 
+def is_about_country_or_region(title: str, summary: str) -> bool:
+    text = f"{title} {summary}".lower()
+    return any(kw.lower() in text for kw in COUNTRY_OR_REGION_KEYWORDS)
+
+
 def is_excluded(title: str, summary: str) -> bool:
     text = f"{title} {summary}".lower()
     return any(kw.lower() in text for kw in EXCLUDE_KEYWORDS)
@@ -279,6 +296,8 @@ def fetch_for_days(days: int) -> list[dict]:
 
             if is_excluded(title, summary):
                 continue
+            if not is_about_country_or_region(title, summary):
+                continue
             if not is_about_economy(title, summary):
                 continue
 
@@ -300,11 +319,9 @@ def fetch_for_days(days: int) -> list[dict]:
 
 
 def collect_news() -> list[dict]:
-    items = []
-    for days in LOOKBACK_STAGES_DAYS:
-        items = fetch_for_days(days)
-        if len(items) >= MIN_ITEMS:
-            break
+    # LOOKBACK_STAGES_DAYS содержит только [2] — строго последние 2 дня,
+    # без расширения периода назад, даже если новостей наберётся мало.
+    items = fetch_for_days(LOOKBACK_STAGES_DAYS[0])
 
     # Приоритет: все новости от международных организаций и деловых изданий
     # сохраняем целиком (их обычно немного, но они самые ценные для сводки),

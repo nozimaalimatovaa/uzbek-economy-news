@@ -2,10 +2,11 @@ name: Daily Uzbekistan Economy News Digest (Free)
 
 on:
   schedule:
-    # 07:00 UTC = 12:00 по Ташкенту (UTC+5, без перевода часов).
-    - cron: "0 7 * * *"
-    # 15:00 UTC = 20:00 по Ташкенту (UTC+5, без перевода часов).
-    - cron: "0 15 * * *"
+    # 06:40 UTC = 11:40 по Ташкенту (UTC+5, без перевода часов).
+    # Запуск заранее, т.к. GitHub Actions часто задерживает cron на 10-30 минут.
+    - cron: "40 6 * * *"
+    # 14:40 UTC = 19:40 по Ташкенту.
+    - cron: "40 14 * * *"
   workflow_dispatch: {}
 
 jobs:
